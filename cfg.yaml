@@ -1,0 +1,11 @@
+run_name: new_run
+training:
+  epochs: 1
+  train_bs: 4
+  val_bs: 8
+  num_workers: 4
+  part_warmup: 0.2
+  lr: 4.0e-5
+  weight_decay: 0.1
+  compile: true
+  seed: 0

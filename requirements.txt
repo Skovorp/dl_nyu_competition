@@ -1,0 +1,9 @@
+datasets
+transformers
+wandb
+pyyaml
+tqdm
+numpy
+Pillow
+accelerate
+python-dotenv
