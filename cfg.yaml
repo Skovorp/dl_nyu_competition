@@ -7,5 +7,5 @@ training:
   part_warmup: 0.2
   lr: 4.0e-5
   weight_decay: 0.1
-  compile: true
+  compile: false
   seed: 0

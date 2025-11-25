@@ -14,10 +14,26 @@ from transformers import (
     get_cosine_schedule_with_warmup
 )
 from tqdm import tqdm
+from torchvision.transforms import v2
+
+def make_transform():
+    resize_size = 96
+    to_tensor = v2.ToImage()
+    if resize_size is not None:
+        resize = v2.Resize((resize_size, resize_size), antialias=True)
+    to_float = v2.ToDtype(torch.float32, scale=True)
+    normalize = v2.Normalize(
+        mean=(0.485, 0.456, 0.406),
+        std=(0.229, 0.224, 0.225),
+    )
+    if resize_size is not None:
+        return v2.Compose([to_tensor, resize, to_float, normalize])
+    else:
+        return v2.Compose([to_tensor, to_float, normalize])
+transform = make_transform()
 
 torch.backends.cuda.enable_math_sdp(False)
 torch.backends.cuda.enable_mem_efficient_sdp(False)
-
 
 load_dotenv()
 
@@ -28,11 +44,10 @@ def set_seeds(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def collate_fn(batch, processor):
+def collate_fn(batch):
     """Convert PIL images to tensors using the image processor."""
-    images = [item['image'].convert('RGB') for item in batch]
-    inputs = processor(images=images, return_tensors='pt')
-    return inputs['pixel_values']
+    images = torch.stack([transform(item['image'].convert('RGB')) for item in batch], 0)
+    return images
 
 
 def main():
@@ -59,8 +74,6 @@ def main():
     teacher_model_name = 'facebook/dinov3-vith16plus-pretrain-lvd1689m'
     student_model_name = 'facebook/dino-vits8'
     
-    processor = AutoImageProcessor.from_pretrained(teacher_model_name)
-    
     teacher_model = AutoModel.from_pretrained(teacher_model_name)
     teacher_model = teacher_model.to(device)
     teacher_model.eval()
@@ -70,6 +83,8 @@ def main():
     
     # Initialize student model (untrained - random weights from config only)
     student_config = AutoConfig.from_pretrained(student_model_name)
+    student_config.image_size = 96
+    # print(student_config)
     student_model = AutoModel.from_config(student_config)
     student_model = student_model.to(device)
     student_model.train()
@@ -81,7 +96,7 @@ def main():
         batch_size=cfg['training']['train_bs'],
         shuffle=True,
         num_workers=cfg['training']['num_workers'],
-        collate_fn=lambda batch: collate_fn(batch, processor),
+        collate_fn=collate_fn,
         pin_memory=True,
         drop_last=True
     )

@@ -7,3 +7,4 @@ numpy
 Pillow
 accelerate
 python-dotenv
+hf_transfer
