@@ -4,50 +4,25 @@ import yaml
 import wandb
 import random
 import numpy as np
-from datasets import load_dataset
 from torch.utils.data import DataLoader
 from dotenv import load_dotenv
 from transformers import (
     AutoModel,
     AutoConfig,
-    AutoImageProcessor,
     get_cosine_schedule_with_warmup
 )
 from tqdm import tqdm
-from torchvision.transforms import v2
 
-def make_transform():
-    resize_size = 96
-    to_tensor = v2.ToImage()
-    if resize_size is not None:
-        resize = v2.Resize((resize_size, resize_size), antialias=True)
-    to_float = v2.ToDtype(torch.float32, scale=True)
-    normalize = v2.Normalize(
-        mean=(0.485, 0.456, 0.406),
-        std=(0.229, 0.224, 0.225),
-    )
-    if resize_size is not None:
-        return v2.Compose([to_tensor, resize, to_float, normalize])
-    else:
-        return v2.Compose([to_tensor, to_float, normalize])
-transform = make_transform()
-
-torch.backends.cuda.enable_math_sdp(False)
-torch.backends.cuda.enable_mem_efficient_sdp(False)
+from dataset import CompetitionDataset
 
 load_dotenv()
+
 
 def set_seeds(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-
-def collate_fn(batch):
-    """Convert PIL images to tensors using the image processor."""
-    images = torch.stack([transform(item['image'].convert('RGB')) for item in batch], 0)
-    return images
 
 
 def main():
@@ -67,7 +42,7 @@ def main():
     )
     
     # Load dataset
-    ds = load_dataset('tsbpp/fall2025_deeplearning', split='train')
+    ds = CompetitionDataset(split='train', image_size=96)
     print(f"Dataset loaded with {len(ds)} samples")
     
     # Load image processor (use teacher's processor for consistency)
@@ -96,7 +71,6 @@ def main():
         batch_size=cfg['training']['train_bs'],
         shuffle=True,
         num_workers=cfg['training']['num_workers'],
-        collate_fn=collate_fn,
         pin_memory=True,
         drop_last=True
     )
@@ -123,16 +97,15 @@ def main():
         teacher_model = torch.compile(teacher_model)
         print("Model compiled with torch.compile")
     
-    # # Projection head to match dimensions if needed
-    # student_dim = student_model.config.hidden_size
-    # teacher_dim = teacher_model.config.hidden_size
+    # Projection head to match dimensions if needed
+    student_dim = 384 # student_model.config.hidden_size
+    teacher_dim = 1280 # teacher_model.config.hidden_size
     
-    # projection_head = None
-    # if student_dim != teacher_dim:
-    #     projection_head = nn.Linear(student_dim, teacher_dim).to(device)
-    #     # Add projection head parameters to optimizer
-    #     optimizer.add_param_group({'params': projection_head.parameters()})
-    #     print(f"Projection head added: {student_dim} -> {teacher_dim}")
+
+    projection_head = nn.Linear(student_dim, teacher_dim).to(device)
+    # Add projection head parameters to optimizer
+    optimizer.add_param_group({'params': projection_head.parameters()})
+    print(f"Projection head added: {student_dim} -> {teacher_dim}")
 
     for epoch in range(cfg['training']['epochs']):
         student_model.train()
@@ -145,20 +118,12 @@ def main():
         for images in pbar:
             images = images.to(device)
             
-            # Forward pass - student
-            student_out = student_model(images).last_hidden_state[:, 0]  # CLS token
-            
-            if projection_head:
-                student_out = projection_head(student_out)
-            
-            # Forward pass - teacher (no grad)
+            student_out = projection_head(student_model(images).pooler_output)
             with torch.no_grad():
-                teacher_out = teacher_model(images).last_hidden_state[:, 0]  # CLS token
+                teacher_out = teacher_model(images).pooler_output
             
-            # MSE Loss
             loss = nn.functional.mse_loss(student_out, teacher_out)
             
-            # Backward pass
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
