@@ -2,7 +2,7 @@ run_name: new_run
 training:
   epochs: 1
   train_bs: 128
-  num_workers: 16
+  num_workers: 8
   part_warmup: 0.2
   lr: 4.0e-5
   weight_decay: 0.1

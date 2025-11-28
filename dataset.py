@@ -1,12 +1,17 @@
+import os
 import torch
 from torch.utils.data import Dataset
-from datasets import load_dataset
 from torchvision.transforms import v2
+from PIL import Image
 
 
 class CompetitionDataset(Dataset):
-    def __init__(self, split='train', image_size=96):
-        self.ds = load_dataset('tsbpp/fall2025_deeplearning', split=split)
+    def __init__(self, image_dir='/workspace/images/train', image_size=96):
+        self.image_paths = sorted([
+            os.path.join(image_dir, f) 
+            for f in os.listdir(image_dir) 
+            if f.endswith('.jpg')
+        ])
         self.transform = self._make_transform(image_size)
     
     def _make_transform(self, resize_size):
@@ -21,11 +26,8 @@ class CompetitionDataset(Dataset):
         ])
     
     def __len__(self):
-        return len(self.ds)
+        return len(self.image_paths)
     
     def __getitem__(self, idx):
-        item = self.ds[idx]
-        image = item['image'].convert('RGB')
-        image = self.transform(image)
-        return image
-
+        image = Image.open(self.image_paths[idx]).convert('RGB')
+        return self.transform(image)

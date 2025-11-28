@@ -42,7 +42,7 @@ def main():
     )
     
     # Load dataset
-    ds = CompetitionDataset(split='train', image_size=96)
+    ds = CompetitionDataset(image_dir='/workspace/images/train', image_size=96)
     print(f"Dataset loaded with {len(ds)} samples")
     
     # Load image processor (use teacher's processor for consistency)
