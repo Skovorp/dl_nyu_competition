@@ -25,6 +25,13 @@ def set_seeds(seed):
     torch.cuda.manual_seed_all(seed)
 
 
+def get_state_dict(model):
+    """Get state dict from model, handling compiled models."""
+    if hasattr(model, '_orig_mod'):
+        return model._orig_mod.state_dict()
+    return model.state_dict()
+
+
 def main():
     with open('cfg.yaml', 'r') as f:
         cfg = yaml.safe_load(f)
@@ -109,8 +116,8 @@ def main():
 
     for epoch in range(cfg['training']['epochs']):
         student_model.train()
-        # if projection_head:
-        #     projection_head.train()
+        if projection_head:
+            projection_head.train()
         
         epoch_loss = 0.0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg['training']['epochs']}")
@@ -118,11 +125,12 @@ def main():
         for images in pbar:
             images = images.to(device)
             
-            student_out = projection_head(student_model(images).pooler_output)
-            with torch.no_grad():
-                teacher_out = teacher_model(images).pooler_output
-            
-            loss = nn.functional.mse_loss(student_out, teacher_out)
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                student_out = projection_head(student_model(images).pooler_output)
+                with torch.no_grad():
+                    teacher_out = teacher_model(images).pooler_output
+                
+                loss = nn.functional.mse_loss(student_out, teacher_out)
             
             optimizer.zero_grad()
             loss.backward()
@@ -150,16 +158,16 @@ def main():
         # Save checkpoint
         checkpoint = {
             'epoch': epoch + 1,
-            'student_model_state_dict': student_model.state_dict(),
+            'student_model_state_dict': get_state_dict(student_model),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': lr_scheduler.state_dict(),
             'loss': avg_epoch_loss,
         }
         if projection_head:
-            checkpoint['projection_head_state_dict'] = projection_head.state_dict()
+            checkpoint['projection_head_state_dict'] = get_state_dict(projection_head)
         
-        torch.save(checkpoint, f'checkpoint_epoch_{epoch+1}.pt')
-        print(f"Checkpoint saved: checkpoint_epoch_{epoch+1}.pt")
+        torch.save(checkpoint, f'{cfg['run_name']}_checkpoint_epoch_{epoch+1}.pt')
+        print(f"Checkpoint saved: {cfg['run_name']}_checkpoint_epoch_{epoch+1}.pt")
     
     wandb.finish()
     print("Training complete!")

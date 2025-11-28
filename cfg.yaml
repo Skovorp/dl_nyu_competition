@@ -1,10 +1,10 @@
-run_name: new_run
+run_name: larger_lr
 training:
   epochs: 1
   train_bs: 128
-  num_workers: 8
+  num_workers: 16
   part_warmup: 0.2
-  lr: 4.0e-5
-  weight_decay: 0.1
-  compile: false
+  lr: 4.0e-4
+  weight_decay: 0.0
+  compile: true
   seed: 0
