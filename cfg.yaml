@@ -1,10 +1,20 @@
-run_name: 3ep
+run_name: cossim_100
 training:
-  epochs: 3
+  epochs: 100
   train_bs: 128
   num_workers: 16
   part_warmup: 0.2
   lr: 4.0e-4
-  weight_decay: 0.0
+  weight_decay: 0.05
+  grad_clip: 1.0
   compile: true
   seed: 0
+prot:
+  dim_prototype: 1024
+  hidden_prototype: 2048
+  center_momentum: 0.99
+  student_temp: 0.4
+  teacher_temp: 0.5
+  mlp_prototype_wd: 0.1
+  cossim_coef: 1.00
+  prototype_coef: 0.0

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import yaml
 import wandb
 import random
@@ -14,6 +15,7 @@ from transformers import (
 from tqdm import tqdm
 
 from dataset import CompetitionDataset
+from custom_create_submission import evaluate_knn_val_accuracy
 
 load_dotenv()
 
@@ -110,8 +112,17 @@ def main():
     
 
     projection_head = nn.Linear(student_dim, teacher_dim).to(device)
-    # Add projection head parameters to optimizer
+    mlp_prototype = nn.Sequential(
+        nn.Linear(1280, cfg['prot']['hidden_prototype']),
+        nn.GELU(),
+        nn.LayerNorm(cfg['prot']['hidden_prototype']),
+        nn.Linear(cfg['prot']['hidden_prototype'], cfg['prot']['dim_prototype'])
+    ).to(device)
+    center = torch.zeros(cfg['prot']['dim_prototype']).to(device)
+
+
     optimizer.add_param_group({'params': projection_head.parameters()})
+    optimizer.add_param_group({'params': mlp_prototype.parameters(), 'weight_decay': cfg['prot']['mlp_prototype_wd']})
     print(f"Projection head added: {student_dim} -> {teacher_dim}")
 
     for epoch in range(cfg['training']['epochs']):
@@ -125,15 +136,37 @@ def main():
         for images in pbar:
             images = images.to(device)
             
+            # inference backbone
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                student_out = projection_head(student_model(images).pooler_output)
+                student_out = student_model(images).pooler_output.to(dtype=torch.float32)
                 with torch.no_grad():
-                    teacher_out = teacher_model(images).pooler_output
+                    teacher_out = teacher_model(images).pooler_output.to(dtype=torch.float32)
+            # do loss stuff
+            student_out = projection_head(student_out)
+            student_prot = mlp_prototype(student_out)
+            student_probs = F.softmax(student_prot / cfg['prot']['student_temp'], dim=-1)
+            
+            with torch.no_grad():
+                teacher_prot = mlp_prototype(teacher_out)
+                teacher_prot_centered = teacher_prot - center.unsqueeze(0)
+                center = center * cfg['prot']['center_momentum'] + teacher_prot.mean(0) * (1 - cfg['prot']['center_momentum'])
+                teacher_probs = F.softmax(teacher_prot_centered / cfg['prot']['teacher_temp'], dim=-1)
                 
-                loss = nn.functional.mse_loss(student_out, teacher_out)
+                teacher_ent = -(teacher_probs * torch.log(teacher_probs + 1e-8)).sum(-1).mean()
+                student_ent = -(student_probs * torch.log(student_probs + 1e-8)).sum(-1).mean()
+                
+                
+            student_logprobs = torch.log(student_probs + 1e-8)
+            prototype_loss = -(teacher_probs * student_logprobs).sum(dim=1).mean()
+            cossim_loss = F.mse_loss(F.normalize(student_out, dim=-1), F.normalize(teacher_out.detach(), dim=-1))
+            
+            loss = cfg['prot']['prototype_coef'] * prototype_loss + cfg['prot']['cossim_coef'] * cossim_loss
             
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(student_model.parameters(), cfg['training']['grad_clip'])
+            torch.nn.utils.clip_grad_norm_(projection_head.parameters(), cfg['training']['grad_clip'])
+            torch.nn.utils.clip_grad_norm_(mlp_prototype.parameters(), cfg['training']['grad_clip'])
             optimizer.step()
             lr_scheduler.step()
             
@@ -142,7 +175,11 @@ def main():
             # Log to wandb
             wandb.log({
                 'train/loss': loss.item(),
+                'train/prototype_loss': prototype_loss.item(),
+                'train/cossim_loss': cossim_loss.item(),
                 'train/lr': lr_scheduler.get_last_lr()[0],
+                'teacher_ent': teacher_ent.item(),
+                'student_ent': student_ent.item(),
             })
             
             pbar.set_postfix({'loss': f'{loss.item():.4f}'})
@@ -166,8 +203,36 @@ def main():
         if projection_head:
             checkpoint['projection_head_state_dict'] = get_state_dict(projection_head)
         
-        torch.save(checkpoint, f'{cfg['run_name']}_checkpoint_epoch_{epoch+1}.pt')
-        print(f"Checkpoint saved: {cfg['run_name']}_checkpoint_epoch_{epoch+1}.pt")
+        checkpoint_path = f'{cfg["run_name"]}_checkpoint_latest.pt'
+        torch.save(checkpoint, checkpoint_path)
+        print(f"Checkpoint saved: {checkpoint_path}")
+        
+        if (epoch + 1) % 5 == 0:
+            val_acc, _ = evaluate_knn_val_accuracy(
+                checkpoint_path=checkpoint_path,
+                data_dir='/root/dl_nyu_competition/kaggle_data',
+                k=5,
+                batch_size=cfg['training']['train_bs'],
+                num_workers=cfg['training']['num_workers'],
+                device='cuda'
+            )
+            wandb.log({
+                'knn/val_accuracy': val_acc,
+            })
+            
+    
+    val_acc, _ = evaluate_knn_val_accuracy(
+        checkpoint_path=checkpoint_path,
+        data_dir='/root/dl_nyu_competition/kaggle_data',
+        k=5,
+        batch_size=cfg['training']['train_bs'],
+        num_workers=cfg['training']['num_workers'],
+        device='cuda'
+    )
+    
+    wandb.log({
+        'knn/val_accuracy': val_acc,
+    })
     
     wandb.finish()
     print("Training complete!")

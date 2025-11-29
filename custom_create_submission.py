@@ -309,6 +309,98 @@ def create_submission(test_features, test_filenames, classifier, output_path):
 
 
 # ============================================================================
+#                          EVALUATION FUNCTION (for training)
+# ============================================================================
+
+def evaluate_knn_val_accuracy(
+    checkpoint_path,
+    data_dir='/workspace/kaggle_data',
+    k=5,
+    batch_size=64,
+    num_workers=4,
+    device='cuda'
+):
+    """
+    Evaluate model checkpoint using KNN classifier and return validation accuracy.
+    
+    Args:
+        checkpoint_path: Path to model checkpoint
+        data_dir: Root directory containing train/val folders
+        k: Number of neighbors for KNN
+        batch_size: Batch size for feature extraction
+        num_workers: Number of workers for data loading
+        device: Device to use (cuda or cpu)
+    
+    Returns:
+        val_acc: Validation accuracy (float)
+        train_acc: Training accuracy (float)
+    """
+    device = device if torch.cuda.is_available() else 'cpu'
+    data_dir = Path(data_dir)
+    
+    # Load CSV files
+    train_df = pd.read_csv(data_dir / 'train_labels.csv')
+    val_df = pd.read_csv(data_dir / 'val_labels.csv')
+    
+    # Create datasets
+    train_dataset = ImageDataset(
+        data_dir / 'train',
+        train_df['filename'].tolist(),
+        train_df['class_id'].tolist()
+    )
+    
+    val_dataset = ImageDataset(
+        data_dir / 'val',
+        val_df['filename'].tolist(),
+        val_df['class_id'].tolist()
+    )
+    
+    # Create dataloaders
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size,
+        shuffle=False, 
+        num_workers=num_workers,
+        collate_fn=collate_fn
+    )
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=batch_size,
+        shuffle=False, 
+        num_workers=num_workers,
+        collate_fn=collate_fn
+    )
+    
+    # Initialize feature extractor with checkpoint
+    feature_extractor = StudentFeatureExtractor(
+        checkpoint_path=checkpoint_path,
+        device=device
+    )
+    
+    # Extract features
+    train_features, train_labels, _ = extract_features_from_dataloader(
+        feature_extractor, train_loader, 'train'
+    )
+    val_features, val_labels, _ = extract_features_from_dataloader(
+        feature_extractor, val_loader, 'val'
+    )
+    
+    # Train KNN classifier
+    classifier = train_knn_classifier(
+        train_features, train_labels,
+        val_features, val_labels,
+        k=k
+    )
+    
+    # Get accuracies
+    train_acc = classifier.score(train_features, train_labels)
+    val_acc = classifier.score(val_features, val_labels)
+    
+    return val_acc, train_acc
+
+
+# ============================================================================
 #                          MAIN
 # ============================================================================
 
