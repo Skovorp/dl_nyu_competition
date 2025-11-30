@@ -1,8 +1,8 @@
-run_name: cossim_100
+run_name: cossim_100_with_augs
 training:
   epochs: 100
   train_bs: 128
-  num_workers: 16
+  num_workers: 20
   part_warmup: 0.2
   lr: 4.0e-4
   weight_decay: 0.05
