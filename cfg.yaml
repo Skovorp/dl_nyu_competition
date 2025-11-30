@@ -1,8 +1,8 @@
-run_name: cossim_100_with_augs
+run_name: cossim_100_with_augs_smaller_teacher
 training:
   epochs: 100
-  train_bs: 128
-  num_workers: 20
+  train_bs: 1024
+  num_workers: 3
   part_warmup: 0.2
   lr: 4.0e-4
   weight_decay: 0.05

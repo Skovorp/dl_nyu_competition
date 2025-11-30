@@ -51,11 +51,12 @@ def main():
     )
     
     # Load dataset
-    ds = CompetitionDataset(image_dir='/workspace/images/train', image_size=96)
+    ds = CompetitionDataset(image_dir='/workspace/images/train', image_size=96, cache_in_memory=True)
     print(f"Dataset loaded with {len(ds)} samples")
     
     # Load image processor (use teacher's processor for consistency)
-    teacher_model_name = 'facebook/dinov3-vith16plus-pretrain-lvd1689m'
+    # teacher_model_name = 'facebook/dinov3-vith16plus-pretrain-lvd1689m'
+    teacher_model_name = 'facebook/dinov3-vitb16-pretrain-lvd1689m'
     student_model_name = 'facebook/dino-vits8'
     
     teacher_model = AutoModel.from_pretrained(teacher_model_name)
@@ -75,13 +76,16 @@ def main():
     print(f"Student model initialized with random weights: {student_model_name}")
     
     # Create dataloader
+    num_workers = cfg['training']['num_workers']
     train_loader = DataLoader(
         ds,
         batch_size=cfg['training']['train_bs'],
         shuffle=True,
-        num_workers=cfg['training']['num_workers'],
+        num_workers=num_workers,
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
     
     # Optimizer
@@ -108,12 +112,12 @@ def main():
     
     # Projection head to match dimensions if needed
     student_dim = 384 # student_model.config.hidden_size
-    teacher_dim = 1280 # teacher_model.config.hidden_size
+    teacher_dim = 768 # teacher_model.config.hidden_size
     
 
     projection_head = nn.Linear(student_dim, teacher_dim).to(device)
     mlp_prototype = nn.Sequential(
-        nn.Linear(1280, cfg['prot']['hidden_prototype']),
+        nn.Linear(teacher_dim, cfg['prot']['hidden_prototype']),
         nn.GELU(),
         nn.LayerNorm(cfg['prot']['hidden_prototype']),
         nn.Linear(cfg['prot']['hidden_prototype'], cfg['prot']['dim_prototype'])
@@ -133,9 +137,10 @@ def main():
         epoch_loss = 0.0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg['training']['epochs']}")
         
-        for view1, view2 in pbar:
-            view1 = view1.to(device)
-            view2 = view2.to(device)
+        for images in pbar:
+            images = images.to(device)
+            view1 = ds.transform(images)
+            view2 = ds.transform(images)
             
             # inference backbone - student gets view1, teacher gets view2
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
@@ -208,7 +213,7 @@ def main():
         torch.save(checkpoint, checkpoint_path)
         print(f"Checkpoint saved: {checkpoint_path}")
         
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 3 == 0:
             val_acc, _ = evaluate_knn_val_accuracy(
                 checkpoint_path=checkpoint_path,
                 data_dir='/root/dl_nyu_competition/kaggle_data',

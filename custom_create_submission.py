@@ -26,8 +26,9 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.neighbors import KNeighborsClassifier
 import argparse
+from dotenv import load_dotenv
 
-
+load_dotenv()
 # ============================================================================
 #                          MODEL SECTION
 # ============================================================================
@@ -64,6 +65,7 @@ class StudentFeatureExtractor:
         student_config.image_size = 96
         
         self.model = AutoModel.from_config(student_config)
+        # self.model = AutoModel.from_pretrained('facebook/dinov3-vitb16-pretrain-lvd1689m')
         
         # Load checkpoint (handle compiled model state dicts)
         checkpoint = torch.load(checkpoint_path, map_location=device)
