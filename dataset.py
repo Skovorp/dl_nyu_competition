@@ -12,12 +12,19 @@ class CompetitionDataset(Dataset):
             for f in os.listdir(image_dir) 
             if f.endswith('.jpg')
         ])
-        self.transform = self._make_transform(image_size)
-    
-    def _make_transform(self, resize_size):
-        return v2.Compose([
+        # BYOL/DINO-style augmentations
+        self.transform = v2.Compose([
             v2.ToImage(),
-            v2.Resize((resize_size, resize_size), antialias=True),
+            v2.RandomResizedCrop(
+                size=(image_size, image_size),
+                scale=(0.4, 1.0),
+                ratio=(0.75, 1.33),
+                antialias=True
+            ),
+            v2.RandomHorizontalFlip(p=0.5),
+            v2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1),
+            v2.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
+            v2.RandomSolarize(threshold=128, p=0.2),
             v2.ToDtype(torch.float32, scale=True),
             v2.Normalize(
                 mean=(0.485, 0.456, 0.406),
@@ -30,4 +37,6 @@ class CompetitionDataset(Dataset):
     
     def __getitem__(self, idx):
         image = Image.open(self.image_paths[idx]).convert('RGB')
-        return self.transform(image)
+        view1 = self.transform(image)
+        view2 = self.transform(image)
+        return view1, view2

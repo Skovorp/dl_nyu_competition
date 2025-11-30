@@ -133,14 +133,15 @@ def main():
         epoch_loss = 0.0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg['training']['epochs']}")
         
-        for images in pbar:
-            images = images.to(device)
+        for view1, view2 in pbar:
+            view1 = view1.to(device)
+            view2 = view2.to(device)
             
-            # inference backbone
+            # inference backbone - student gets view1, teacher gets view2
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                student_out = student_model(images).pooler_output.to(dtype=torch.float32)
+                student_out = student_model(view1).pooler_output.to(dtype=torch.float32)
                 with torch.no_grad():
-                    teacher_out = teacher_model(images).pooler_output.to(dtype=torch.float32)
+                    teacher_out = teacher_model(view2).pooler_output.to(dtype=torch.float32)
             # do loss stuff
             student_out = projection_head(student_out)
             student_prot = mlp_prototype(student_out)
